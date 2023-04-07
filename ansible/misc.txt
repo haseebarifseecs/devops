@@ -1,0 +1,15 @@
+postgresql
+postgresql-12
+postgresql-client-12
+postgresql-client-common
+postgresql-common
+postgresql-contrib
+if dpkg-query -L postgresql-12 >/dev/null 2>&1; then for p in $(dpkg-query -L postgresql-12); do if [ -f "$p" ]; then echo $($p | grep "\.conf$") ; fi; done; fi
+if dpkg-query -L postgresql-12 >/dev/null 2>&1; then for p in $(dpkg-query -L postgresql-12); do if [ -f "$p" ]; then echo "$p"; fi; done; fi
+if dpkg-query -L postgresql-client-12 >/dev/null 2>&1; then for p in $(dpkg-query -L postgresql-client-12); do if [ -f "$p" ]; then echo "$p"; fi; done; fi
+if dpkg-query -L postgresql-client-common >/dev/null 2>&1; then for p in $(dpkg-query -L postgresql-client-common); do if [ -f "$p" ]; then echo "$p"; fi; done; fi
+if dpkg-query -L postgresql-common >/dev/null 2>&1; then for p in $(dpkg-query -L postgresql-common); do if [ -f "$p" ]; then echo "$p"; fi; done; fi
+if dpkg-query -L postgresql-contrib >/dev/null 2>&1; then for p in $(dpkg-query -L postgresql-contrib); do if [ -f "$p" ]; then echo "$p"; fi; done; fi
+if dpkg-query -L postgresql-common >/dev/null 2>&1; then for p in $(dpkg-query -Lpostgresql-common); do if [ -f "$p" ] && echo "$p" | grep -q "\.conf$"; then echo "$p"; fi; done; fi
+
+ansible all -i "wp-hiodev-redis-01,wp-hiodev-redis-02,wp-hiodev-redis-03,wp-hiodev-redis-lb-01," -m gather_facts -a "gather_subset=hardware" -u awayland --private-key ~/.ssh/ansible_host_key

@@ -1,0 +1,38 @@
+---
+- name: Test
+  hosts: localhost
+  gather_facts: yes
+  become: yes
+  tasks:
+    - name: Check Python Package Files
+      shell:
+        cmd: 'rpm -ql python'
+        executable: /bin/bash
+      register: result
+    
+    - debug:
+        var: result.stdout_lines
+    
+    - name: Fetch Python Package Files
+      stat:
+        path: "{{ item }}"
+      register: st
+      with_items: "{{ result.stdout_lines }}"
+     
+    - debug:
+        var: st
+      
+    - debug:
+       var: item.stat.isdir
+      loop: "{{ st.results }}"
+      when: item.stat.exists
+
+
+/root/medical_bot-dbs
+
+
+- name: Test
+  hosts: web1
+  gather_facts: yes
+  tasks:
+   - name: 

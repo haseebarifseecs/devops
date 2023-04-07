@@ -1,0 +1,36 @@
+---
+linux_hosts:
+  hosts:
+    host01:
+      ansible_host: wp-hio-dev-pstgr-01
+    host02:
+      ansible_host: wp-hio-dev-pstgr-02
+    host03:
+      ansible_host: wp-hio-qtest-01
+    host04:
+      ansible_host: wp-hiodev-lb-01
+    host05:
+      ansible_host: wp-hiodev-ldap-02
+    host06:
+      ansible_host: wp-hiodev-redis-02
+    host07:
+      ansible_host: wp-hiodev-redis-03
+    host08:
+      ansible_host: wp-hiodev-redis-lb-01
+    host09:
+      ansible_host: wp-proxy
+    host10:
+      ansible_host: wp-hiodev-redis-01
+    host11:
+      ansible_host: hio-qtest-01
+  vars:
+    ansible_user: awayland
+    ansible_ssh_private_key_file: ~/.ssh/ansible_host_key
+
+servers:
+  children:
+    linux_hosts:
+
+
+
+

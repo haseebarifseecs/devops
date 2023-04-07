@@ -1,0 +1,154 @@
+---
+- name: Extract Postgres Configuration
+  hosts: 
+  - host01
+  - host02
+  gather_facts: yes
+  tasks:
+  - ansible.builtin.package_facts:
+      manager: ["apt"]
+  
+  - name: Print the package facts
+    ansible.builtin.debug:
+      var: ansible_facts.packages
+
+  - name: Append package facts to file on control machine
+    ansible.builtin.lineinfile:
+      path: "~/Ansible_CaC/postgres_hosts_info.txt"
+      line: "{{ ansible_facts.packages | to_json }}"
+      create: yes
+      insertafter: EOF
+    delegate_to: localhost
+
+  - name: Find postgres packages
+    ansible.builtin.set_fact:
+      postgres_packages: "{{ ansible_facts.packages | dict2items | selectattr('key', 'search', '^postgresql.*') | map(attribute='key') | list }}"
+    when: ansible_facts.packages is defined
+
+  - name: Append postgres_packages to file on control machine
+    ansible.builtin.lineinfile:
+      path: "~/Ansible_CaC/postgres_hosts_info.txt"
+      line: "{{ postgres_packages | to_json }}"
+      create: yes
+      insertafter: EOF
+    delegate_to: localhost
+
+  - name: Print postgres packages
+    ansible.builtin.debug:
+      var: postgres_packages
+    when: postgres_packages is defined
+# if dpkg-query -L python3 >/dev/null 2>&1; then for p in $(dpkg-query -L python3); do if [ -f "$p" ]; then echo "$p"; fi; done; fi
+# dpkg-query -L {{ item }} | grep '^/etc/' || true
+#'if dpkg-query -L {{ item }} >/dev/null 2>&1; then for p in $(dpkg-query -L {{ item }}); do if [ -f "$p" ] && echo "$p" | grep -q "\.conf$"; then echo "$p"; fi; done; fi'
+  - name: Get configuration files for postgres packages
+    block:
+      - ansible.builtin.shell:
+          cmd: 'if dpkg-query -L {{ item }} >/dev/null 2>&1; then for p in $(dpkg-query -L {{ item }} | grep "^/etc/"); do echo "$p"; done; fi'
+          executable: /bin/bash
+        loop: "{{ postgres_packages }}"
+        register: result
+        failed_when: false
+      
+      # - ansible.builtin.shell:
+      #     cmd: 'if dpkg-query -L {{ item }} >/dev/null 2>&1; then for p in $(dpkg-query -L {{ item }} | grep '^/etc/'); do if [ -f "$p" ]; then echo "$p"; fi; done; fi'
+      #     executable: /bin/bash
+      #   loop: "{{ postgres_packages }}"
+      #   register: dirs
+      #   failed_when: false
+
+       - name: Append dpkg-query result to file on control machine
+         ansible.builtin.lineinfile:
+          path: "~/Ansible_CaC/postgres_hosts_info.txt"
+          line: "{{ result | to_json }}"
+          create: yes
+          insertafter: EOF
+        delegate_to: localhost
+
+      - name: Print configuration files for postgres packages
+        ansible.builtin.debug:
+          var: item.stdout_lines
+        loop: "{{ result.results }}"
+
+      - name: Check Dest is a file
+        stat:
+          path: "{{ item.1 }}"
+        register: st
+        with_subelements:
+          - "{{ result.results }}"
+          - "stdout_lines"
+      
+      - name: Copy Configuration
+        ansible.builtin.fetch:
+          src: "{{ item.stat.path }}"
+          dest: ~/Ansible_CaC
+        loop: "{{ st.results }}"
+        when:
+        - item.stat.exists
+        - not item.stat.isdir
+      
+      - name: Archive Dirs
+        become: yes
+        become_method: sudo
+        community.general.archive:
+          path: "{{ item.stat.path }}"
+          dest: "{{ item.stat.path }}.tar.gz"
+          format: gz
+        loop: "{{ st.results }}"
+        when:
+        - item.stat.exists
+        - item.stat.isdir
+
+      - name: Copy Archives
+        become: yes
+        become_method: sudo
+        ansible.builtin.fetch:
+          src: "{{ item.stat.path }}.tar.gz"
+          dest: ~/Ansible_CaC
+        loop: "{{ st.results }}"
+        when:
+        - item.stat.exists
+        - item.stat.isdir
+
+      # - name: Debug scp command
+      #   debug:
+      #     msg: "scp -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }} {{ ansible_user }}@{{ hostvars[inventory_hostname].ansible_host  }}:{{ item.stat.path }} ~/Ansible_CaC"
+      #   loop: "{{ st.results }}"
+      #   when:
+      #   - item.stat.exists
+      #   - item.stat.isdir
+
+        
+      # - name: Sync directory to localhost
+      #   ansible.builtin.shell:
+      #     cmd: 'scp -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }} {{ ansible_user }}@{{ hostvars[inventory_hostname].ansible_host  }}:{{ item.stat.path }} ~/Ansible_CaC'
+      #     executable: /bin/bash
+      #   loop: "{{ st.results }}"
+      #   when:
+      #   - item.stat.exists
+      #   - item.stat.isdir
+
+
+        
+      # - name: Copy Configuration
+      #   ansible.builtin.stat:
+      #     path: "{{ item.1 }}"
+      #   register: st
+      #   ansible.builtin.fetch:
+      #     dest: ~/Ansible_CaC
+      #     fail_on_missing: true
+      #     src: "{{ item.1 }}"
+      #   with_subelements:
+      #     - "{{ result.results }}"
+      #     - "stdout_lines"
+      #   when: 
+      #   - item.1 is defined
+      #   - not st.isdir
+
+
+
+    rescue:
+      - name: Failed to get configuration files for postgres packages
+        ansible.builtin.debug:
+          msg: "Error: {{ ansible_failed_result }}"
+
+

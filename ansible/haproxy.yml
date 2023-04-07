@@ -1,0 +1,38 @@
+---
+- name: Extract HAProxy Configuration
+  hosts: 
+  - host04
+  - host08
+  gather_facts: yes
+  tasks:
+  - ansible.builtin.package_facts:
+      manager: ["rpm"]
+  - name: Print the package facts
+    ansible.builtin.debug:
+     var: ansible_facts.packages
+  - name: Check whether a package called haproxy is installed
+    ansible.builtin.debug:
+     msg: "{{ ansible_facts.packages['haproxy'] | length }} versions of haproxy are installed!"
+    when: "'haproxy' in ansible_facts.packages"   
+  - ansible.builtin.shell:
+      cmd: rpm -cq haproxy
+    args:
+      executable: /bin/bash
+    register: rpm_out
+    when: "'haproxy' in ansible_facts.packages"
+    failed_when: rpm_out.rc != 0
+  - ansible.builtin.debug:
+      msg: "{{ rpm_out.stdout_lines }}"
+    when: rpm_out.rc == 0
+  - name: Copy Config from Remote to Host
+    ansible.builtin.fetch:
+      dest: ~/Ansible_CaC
+      fail_on_missing: true
+      src: "{{ item }}"
+    with_items: "{{ rpm_out.stdout_lines }}"
+    when: rpm_out.rc == 0
+
+      
+
+
+    
