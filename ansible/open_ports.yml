@@ -8,16 +8,18 @@
   gather_facts: no
   tasks:
     - name: Check if net-tools package is installed
-      ansible.builtin.yum:
-        list: net-tools
+      ansible.builtin.package:
+        name: net-tools
+        state: present
+      check_mode: true
       register: net_tools
 
     - name: Gather Port Info if net-tools package is installed
       community.general.listen_ports_facts:
-      when: net_tools|success
+      when: net_tools is succeeded
 
     
     - name: List all ports
       ansible.builtin.debug:
         msg: "{{ (ansible_facts.tcp_listen + ansible_facts.udp_listen) | map(attribute='port') | unique | sort | list }}"
-      when: net_tools|success
+      when:  net_tools is succeeded
