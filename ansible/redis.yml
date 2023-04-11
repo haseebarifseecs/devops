@@ -24,13 +24,27 @@
       when: redis_path is succeeded
       ansible.builtin.debug:
         var: redis_path
-
+      
+    - name: Test Task
+      ansible.builtin.shell:
+        cmd: "whoami"
+        executable: /bin/bash
+      register: wuser
+      become: true
+      become_user: root
+      become_method: sudo
+    
+    - name: Debug User
+      ansible.builtin.debug:
+        var: wuser
+    
     - name: Copy Redis configuration file
       when: redis_path is succeeded
       fetch:
         src: "{{ redis_path.stdout }}"
         dest: ~/Ansible_CaC/redis
-
+      become: true
+      
     - name: Check if Redis Sentinel is accessible
       ansible.builtin.shell:
         cmd: "redis-cli -p {{ port }} INFO"
@@ -54,4 +68,7 @@
       fetch:
         src: "{{ redis_sentinel_path.stdout }}"
         dest: ~/Ansible_CaC/redis
-
+      become: true
+      
+    
+    

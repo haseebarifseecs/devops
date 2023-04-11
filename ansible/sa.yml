@@ -1,0 +1,27 @@
+---
+- name: Create devops user and set password
+  hosts:
+  - host10
+  become: true
+  become_method: sudo
+  tasks:
+    - name: Create devops user
+      user:
+        name: devops
+        comment: "DevOps user"
+        shell: /bin/bash
+        createhome: yes
+
+    - name: Set devops password
+      ansible.builtin.user:
+        name: devops
+        password: "{{ 'Qawsedrf@321' | password_hash('sha512', 'mysecretsalt') }}"
+        update_password: always
+
+    - name: Add devops to sudoers 
+      ansible.builtin.lineinfile:
+        path: /etc/sudoers
+        line: 'devops ALL=(ALL) NOPASSWD: ALL'
+        state: present
+        validate: 'visudo -cf %s'
+
