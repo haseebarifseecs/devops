@@ -1,0 +1,80 @@
+---
+- name: Grab OpenLDAP Config
+  hosts: host05
+  gather_facts: yes
+  vars:
+    ldap_packages:
+    - compat-openldap
+    - openldap
+    - openldap-clients
+    - openldap-servers
+    - openldap-servers-sql
+
+  tasks:
+  - name: Query Packages
+    ansible.builtin.shell:
+      cmd: "rpm -qc {{ item }}"
+      executable: /bin/bash
+    register: output
+    loop: "{{ ldap_packages }}"
+  
+  - name: Display Package Query
+    ansible.builtin.debug:
+      var: output
+
+  - name: Gather File Info
+    ansible.builtin.stat:
+      path: "{{ item.1 }}"
+    register: file_info
+    with_subelements:
+    - "{{ output.results }}"
+    - "stdout_lines"
+    when: item.1 is defined
+
+  - name: Display File Info
+    ansible.builtin.debug:
+      var: file_info
+
+  - name: Copy Packages Configs
+    become: yes
+    become_method: sudo
+    ansible.builtin.fetch:
+      dest: ~/Ansible_CaC/openldap
+      src: "{{ item.stat.path  }}"
+    loop: "{{ file_info.results }}"
+    when:
+    - item.stat.exists
+    - not item.stat.isdir
+
+  - name: Copy DATABASE Config
+    become: yes
+    become_method: sudo
+    ansible.builtin.fetch:
+      dest: ~/Ansible_CaC/openldap
+      src: /var/lib/ldap/DB_CONFIG
+    
+  - name: Archive /etc/openldap
+    become: yes
+    become_method: sudo
+    community.general.archive:
+      path: /etc/openldap
+      dest: /etc/openldap.tar.gz
+      format: gz
+  
+  - name: Copy openldap.tar.gz
+    become: yes
+    become_method: sudo
+    ansible.builtin.fetch:
+      src: /etc/openldap.tar.gz
+      flat: yes
+      dest:  ~/Ansible_CaC/openldap/archive/openldap.tar.gz
+
+  - name: Unarchive Tarball
+    ansible.builtin.unarchive:
+      src: ~/Ansible_CaC/openldap/archive/openldap.tar.gz
+      dest: ~/Ansible_CaC/openldap/archive
+      extra_opts: [--strip-components=1]
+    delegate_to: localhost
+
+
+    
