@@ -1,0 +1,38 @@
+---
+- name: Extract qtest.config
+  hosts: host03
+  gather_facts: yes
+  tasks:
+    - name: Extract /etc/qtest/qtestctl/qtest.config
+      become: yes
+      become_method: sudo
+      ansible.builtin.fetch:
+        dest: ~/Ansible_CaC/qtest/qtest.config
+        flat: yes
+        src: /etc/qtest/qtestctl/qtest.config
+    
+    # - name: Archive /etc/qtest
+    #   become: yes
+    #   become_method: sudo
+    #   community.general.archive:
+    #     path: /etc/qtest
+    #     dest: /etc/qtest.tar.gz
+    #     format: gz
+
+    # - name: Fetch Archive
+    #   become: yes
+    #   become_method: sudo
+    #   ansible.builtin.fetch:
+    #     dest: ~/Ansible_CaC/qtest/qtest.tar.gz
+    #     flat: yes
+    #     src: /etc/qtest.tar.gz
+    
+    # - name: Unarchive qtest.tar.gz
+    #   ansible.builtin.unarchive:
+    #     src: ~/Ansible_CaC/qtest/qtest.tar.gz
+    #     dest: ~/Ansible_CaC/qtest/archive
+    #     extra_opts: [--strip-components=1]
+    #   delegate_to: localhost
+
+
+
