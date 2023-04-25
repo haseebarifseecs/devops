@@ -27,10 +27,20 @@ linux_hosts:
     ansible_user: awayland
     ansible_ssh_private_key_file: ~/.ssh/ansible_host_key
 
+windows_hosts:
+  hosts:
+    win01:
+      ansible_host: wp-qtestag-01
+      ansible_port: 5986
+      ansible_connection: winrm
+      ansible_winrm_transport: basic
+      ansible_winrm_server_cert_validation: ignore
+      ansible_user: ansible
+
 servers:
   children:
     linux_hosts:
-
+    windows_hosts:
 
 
 

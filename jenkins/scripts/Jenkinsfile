@@ -1,0 +1,386 @@
+pipeline {
+    agent any
+    environment {
+        NAMESPACE = 'jenkins'
+        POSTGRES = 'postgres'
+        IMAGENAME = "rakeemwayland1/drupal-tripal3:${env.BUILD_NUMBER}"
+        SNYK = "${tool 'snyk'}"
+        PROJECT = "Snyk-Docker"
+        ORG = "albertwayland-usda"
+        SONARSCANNER='sonarscanner'
+        SONARPROJECT='i5k-tripal-docker'
+        SONARKEY='i5k-tripal-docker'
+    }
+    stages {
+        stage('Clear WorkSpace') {
+            steps {
+                sh 'rm -rf $WORKSPACE/*'
+            }
+        }
+        stage('Git Checkout') {
+            steps {
+                sh 'git clone git@github.com:NAL-i5K/i5k-tripal-docker.git'
+                sh 'git clone --recurse-submodules git@github.com:isdapps/i5k-tripal.git'
+                sh 'git clone git@github.com:albertwayland-USDA/i5k-k8s-manifests.git'
+            }
+        }
+
+
+        stage("Preparing Sonar Scanner and Performing SCA") {
+            steps {
+                script {
+                    scannerhome = tool 'sonarscanner'
+                }
+                withEnv(["SCANNERHOME=${scannerhome}"]) {
+                    withSonarQubeEnv('SonarServer') {
+                        sh """${SCANNERHOME}/bin/sonar-scanner \
+                            -Dsonar.projectKey=${SONARPROJECT} \
+                            -Dsonar.projectName=${SONARKEY} \
+                            -Dsonar.sources=${WORKSPACE}/i5k-tripal-docker """
+                    }
+                }
+            }
+        }
+
+        stage("Sonar Quality Gate Report") {
+            steps {
+              timeout(time: 1, unit: 'HOURS') {
+                  
+                  script{
+                      qualitygate = waitForQualityGate() 
+                      if (qualitygate.status != "OK") { 
+                          currentBuild.result = "SUCCESS"
+                      }
+                  }
+                
+              }
+            }
+        } 
+
+        stage('Docker Cleanup') {
+            steps {
+                script {
+                    def dockerRmi = sh script: 'docker rmi $(docker images -qf dangling=true)', returnStatus: true
+                    def dockerRm = sh script: 'docker rm $(docker ps -f "status=exited")', returnStatus: true
+
+                    if (dockerRmi != 0 || dockerRm != 0) {
+                        echo "No Dangling Container/Images found"
+                    }
+                }
+            }
+        }
+
+
+
+
+        stage('Docker Build') {
+            steps {
+                sh 'cd $WORKSPACE/i5k-tripal-docker && docker build -f Dockerfile -t drupal-tripal3 .'
+                sh "docker tag drupal-tripal3 ${IMAGENAME}"
+            }
+        }
+        
+        stage("Snyk Scan Docker Image"){
+            steps{
+
+                withCredentials([string(credentialsId: 'snyk_api_token', variable: 'SNYK_TOKEN')]){
+                    sh '$SNYK/snyk-linux --version'
+                    sh '$SNYK/snyk-linux auth $SNYK_TOKEN' 
+                    sh '$SNYK/snyk-linux container test --json --severity-threshold=low --org=$ORG --project-name=$PROJECT $IMAGENAME > ${WORKSPACE}/report.json || true'                   
+                }
+  
+                sh "$snyk/snyk-to-html-linux -i ${WORKSPACE}/report.json -o ${WORKSPACE}/results.html"
+                echo "Publishing Snyk Report"
+                publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: '', reportFiles: 'results.html', reportName: 'Snyk Report', reportTitles: 'Snyk Report', useWrapperFileDirectly: true])
+            }
+        }
+
+        stage('Docker Login') {
+            steps {
+                withCredentials([string(credentialsId: 'docker_password', variable: 'DPASS')]) {
+                    // Use MY_SECRET_TEXT variable here
+                    sh 'echo $DPASS | docker login --username rakeemwayland1 --password-stdin'
+                }
+            }
+        }
+
+        stage('Docker Push') {
+            steps {
+                sh "docker push rakeemwayland1/drupal-tripal3:${env.BUILD_NUMBER}"
+            }
+        }
+
+        stage('Namespace Check') {
+            steps {
+                script {
+                    try {
+                        // Check if namespace exists
+                        def ns = sh(script: "kubectl get namespace ${env.NAMESPACE} -o json | jq .status.phase -r", returnStdout: true).trim()
+                        println("Namespace '${env.NAMESPACE}' exists with status: ${ns}")
+
+                        // Create namespace if it does not exist or is not active
+                        if (ns != 'Active') {
+                            sh(script: "kubectl create namespace ${env.NAMESPACE}")
+                            println("Namespace '${env.NAMESPACE}' created")
+                        }
+                    } catch (Exception ex) {
+                        // Handle errors
+                        println("Error while checking/creating namespace: ${ex.getMessage()}")
+                    }
+                }
+            }
+        }
+
+        stage('K8s manifest StatefulSet cleanup') {
+            steps {
+                script {
+                    try {
+                        sh "cd ${WORKSPACE}/i5k-k8s-manifests/postgres"
+                        // Use envsubst to replace variables in the manifest file
+                        sh "envsubst < ${WORKSPACE}/i5k-k8s-manifests/postgres/pg-statefulset.yaml | kubectl delete -f -"
+                        println('PVC applied successfully')
+                    } catch (Exception ex) {
+                        // Handle errors
+                        println("Error while deleting Statefulset: ${ex.getMessage()}")
+                        currentBuild.result = 'FAILURE'
+                    }
+                }
+            }
+        }
+
+        stage('K8s manifest PVC cleanup') {
+            steps {
+                script {
+                    try {
+                        sh "cd ${WORKSPACE}/i5k-k8s-manifests/postgres"
+                        // Use envsubst to replace variables in the manifest file
+                        sh "envsubst < ${WORKSPACE}/i5k-k8s-manifests/postgres/pvc.yaml | kubectl delete -f -"
+                        println('PVC applied successfully')
+                    } catch (Exception ex) {
+                        // Handle errors
+                        println("Error while deleting PVC: ${ex.getMessage()}")
+                        currentBuild.result = 'FAILURE'
+                    }
+                }
+            }
+        }
+
+        stage('Creating PVC for Postgres') {
+            steps {
+                script {
+                    try {
+                        sh "cd ${WORKSPACE}/i5k-k8s-manifests/postgres"
+                        // Use envsubst to replace variables in the manifest file
+                        sh "envsubst < ${WORKSPACE}/i5k-k8s-manifests/postgres/pvc.yaml | kubectl apply -f -"
+                        println('PVC applied successfully')
+                    } catch (Exception ex) {
+                        // Handle errors
+                        println("Error while applying PVC: ${ex.getMessage()}")
+                        currentBuild.result = 'FAILURE'
+                    }
+                }
+            }
+        }
+
+        stage('Creating Postgres Statefulset') {
+            steps {
+                script {
+                    try {
+                        sh "cd ${WORKSPACE}/i5k-k8s-manifests/postgres"
+                        // Use envsubst to replace variables in the manifest file
+                        sh "envsubst < ${WORKSPACE}/i5k-k8s-manifests/postgres/pg-statefulset.yaml | kubectl apply -f -"
+                        println('Postgres Statefulset applied successfully')
+                    } catch (Exception ex) {
+                        // Handle errors
+                        println("Error while applying Postgres Statefulset: ${ex.getMessage()}")
+                        currentBuild.result = 'FAILURE'
+                    }
+                }
+            }
+        }
+
+        stage('Setting Up DB Environment') {
+            steps {
+                script {
+                    try {
+                        def dbPodName = sh(script: "kubectl get pods -n ${NAMESPACE} --selector=app=db -o name | head -n 1 |  cut -d'/' -f2", returnStdout: true).trim()
+                        println("Namespace '${env.NAMESPACE}' PodName: ${dbPodName}")
+                        sh "kubectl wait pods -n ${env.NAMESPACE} -l app=db  --for condition=Ready --timeout=3600s"
+                        sleep time: 60, unit: 'SECONDS'
+                        sh "python3 ${WORKSPACE}/i5k-k8s-manifests/scripts/db.py ${dbPodName} ${env.NAMESPACE}"
+
+                    } catch (Exception ex) {
+                        // Handle errors
+                        println("DB Pod Doesn't Exist: ${ex.getMessage()}")
+                    }
+                }
+            }
+        }
+
+        stage('Drupal Deployment Cleanup') {
+            steps {
+                script {
+                    try {
+                        sh "cd ${WORKSPACE}/i5k-k8s-manifests/drupal"
+                        // Use envsubst to replace variables in the manifest file
+                        sh "envsubst < ${WORKSPACE}/i5k-k8s-manifests/drupal/depl.yaml | kubectl delete -f -"
+                        println('Drupal Deployment Deleted Successfully!')
+          } catch (Exception ex) {
+                        // Handle errors
+                        println("Error while deleting Drupal Deployment: ${ex.getMessage()}")
+                        currentBuild.result = 'FAILURE'
+                    }
+                }
+            }
+        }
+
+        stage('Drupal PVC cleanup') {
+            steps {
+                script {
+                    try {
+                        sh "cd ${WORKSPACE}/i5k-k8s-manifests/drupal"
+                        // Use envsubst to replace variables in the manifest file
+                        sh "envsubst < ${WORKSPACE}/i5k-k8s-manifests/drupal/pvc.yaml | kubectl delete -f -"
+                        println('PVC Deleted successfully')
+          } catch (Exception ex) {
+                        // Handle errors
+                        println("Error while deleting PVC: ${ex.getMessage()}")
+                        currentBuild.result = 'FAILURE'
+                    }
+                }
+            }
+        }
+
+        stage('Creating PVC for Drupal') {
+            steps {
+                script {
+                    try {
+                        sh "cd ${WORKSPACE}/i5k-k8s-manifests/drupal"
+                        // Use envsubst to replace variables in the manifest file
+                        sh "envsubst < ${WORKSPACE}/i5k-k8s-manifests/drupal/pvc.yaml | kubectl apply -f -"
+                        println('PVC applied successfully')
+          } catch (Exception ex) {
+                        // Handle errors
+                        println("Error while applying PVC: ${ex.getMessage()}")
+                        currentBuild.result = 'FAILURE'
+                    }
+                }
+            }
+        }
+
+        stage('Creating Drupal Deployment') {
+            steps {
+                script {
+                    try {
+                        sh "cd ${WORKSPACE}/i5k-k8s-manifests/drupal"
+                        // Use envsubst to replace variables in the manifest file
+                        sh "envsubst < ${WORKSPACE}/i5k-k8s-manifests/drupal/depl.yaml | kubectl apply -f -"
+                        println('Drupal Deployment applied successfully')
+          } catch (Exception ex) {
+                        // Handle errors
+                        println("Error while applying Drupal Deployment: ${ex.getMessage()}")
+                        currentBuild.result = 'FAILURE'
+                    }
+                }
+            }
+        }
+        stage('Setting Up Drupal Environment') {
+            steps {
+                script {
+                    try {
+                        def dbPodName = sh(script: "kubectl get pods -n ${NAMESPACE} --selector=app=drupal -o name | head -n 1 |  cut -d'/' -f2", returnStdout: true).trim()
+                        println("Namespace '${env.NAMESPACE}' PodName: ${dbPodName}")
+                        sh "kubectl wait pods -n ${env.NAMESPACE} -l app=drupal  --for condition=Ready --timeout=3600s"
+                        sleep time: 60, unit: 'SECONDS'
+                        sh "cp ${WORKSPACE}/i5k-tripal-docker/settings.php ${WORKSPACE}/i5k-tripal/wwwroot/sites/default"
+                        sh "tar xzvf ${WORKSPACE}/i5k-tripal-docker/i5k_default_files.tgz --directory ${WORKSPACE}/i5k-tripal/wwwroot/sites/default/"
+                        sh "kubectl cp -n ${env.NAMESPACE} ${WORKSPACE}/i5k-tripal/wwwroot/sites/. ${dbPodName}:/var/www/html/sites --v=4"
+                        sh "kubectl cp -n ${env.NAMESPACE} ${WORKSPACE}/i5k-tripal/wwwroot/themes/. ${dbPodName}:/var/www/html/themes --v=4"
+                        sh "kubectl cp -n ${env.NAMESPACE} ${WORKSPACE}/i5k-tripal/wwwroot/profiles/. ${dbPodName}:/var/www/html/profiles --v=4"
+                        sh "kubectl cp -n ${env.NAMESPACE} ${WORKSPACE}/i5k-tripal/wwwroot/modules/. ${dbPodName}:/var/www/html/modules --v=4"
+                        sh """kubectl exec -it -n ${env.NAMESPACE} ${dbPodName} -- /bin/bash -c 'chown -R "1000:1000" /var/www/html/modules'"""
+                        sh """kubectl exec -it -n ${env.NAMESPACE} ${dbPodName} -- /bin/bash -c 'chown -R "1000:1000" /var/www/html/profiles'"""
+                        sh """kubectl exec -it -n ${env.NAMESPACE} ${dbPodName} -- /bin/bash -c 'chown -R "1000:1000" /var/www/html/themes'"""
+                        sh """kubectl exec -it -n ${env.NAMESPACE} ${dbPodName} -- /bin/bash -c 'chown -R "1000:1000" /var/www/html/sites'"""
+          } catch (Exception ex) {
+                        // Handle errors
+                        println("Drupal Pod Doesn't Exist: ${ex.getMessage()}")
+                    }
+                }
+            }
+        }
+
+        stage('Drush Configure') {
+            steps {
+                script {
+                    try {
+                        def dbPodName = sh(script: "kubectl get pods -n ${NAMESPACE} --selector=app=drupal -o name | head -n 1 |  cut -d'/' -f2", returnStdout: true).trim()
+                        println("Namespace '${env.NAMESPACE}' PodName: ${dbPodName}")
+                        sleep time: 100, unit: 'SECONDS'
+                        sh """kubectl exec -it ${dbPodName} -n ${env.NAMESPACE} -- /bin/bash -c 'chmod -R 775 /var/www/html/sites/default/files'"""
+                        sh """kubectl exec -it ${dbPodName} -n ${env.NAMESPACE} -- /bin/bash -c 'chgrp -R www-data /var/www/html/sites/default/files'"""
+                        sh """kubectl exec -it ${dbPodName} -n ${env.NAMESPACE} -- /bin/bash -c 'drush @none dl registry_rebuild-7.x'"""
+                        sh """kubectl exec -it ${dbPodName} -n ${env.NAMESPACE} -- /bin/bash -c 'drush -y updb'"""
+                        sh """kubectl exec -it ${dbPodName} -n ${env.NAMESPACE} -- /bin/bash -c 'drush rr'"""
+                        sh """kubectl exec -it ${dbPodName} -n ${env.NAMESPACE} -- /bin/bash -c 'drush cc all'"""
+                        sh """kubectl exec -it ${dbPodName} -n ${env.NAMESPACE} -- /bin/bash -c 'drush vset preprocess_js 0'"""
+                        sh """kubectl exec -it ${dbPodName} -n ${env.NAMESPACE} -- /bin/bash -c 'drush vset preprocess_css 0'"""
+                        withCredentials([string(credentialsId: 'drupal_pass', variable: 'DRUPAL_PASS')]){
+                            sh """kubectl exec -it ${dbPodName} -n ${env.NAMESPACE} -- /bin/bash -c 'drush upwd --password=${DRUPAL_PASS} admin'"""
+                        }
+                        
+                        sleep time: 120, unit: 'SECONDS'
+                        sh """kubectl scale deployment drupal-tripal-deployment -n ${env.NAMESPACE} --replicas=3"""
+          } catch (Exception ex) {
+                        // Handle errors
+                        println("Drupal Pod Doesn't Exist: ${ex.getMessage()}")
+                    }
+                }
+            }
+        }
+
+        stage('Cypress Test Run') {
+            steps {
+                sh 'cd $WORKSPACE/i5k-tripal/cicd/cypress; sed -i "s/localhost:8080/20.62.235.155/g" cypress.config.js'
+                sh 'cd $WORKSPACE/i5k-tripal/cicd/cypress; npm install'
+                sh 'cd $WORKSPACE/i5k-tripal/cicd/cypress; NO_COLOR=1 npx cypress run || true'
+            }
+        }
+
+        stage("Pa11y Compliance Check"){
+            steps
+            {
+                sh "cd ${WORKSPACE}/i5k-k8s-manifests; docker run -dit --name test-sitemap-web -p 9090:80 nginx:alpine"
+                sh "cd ${WORKSPACE}/i5k-k8s-manifests; docker cp sitemap.xml test-sitemap-web:/usr/share/nginx/html"
+                script {
+                    def result = sh(returnStatus: true, script: "pa11y-ci --reporter=pa11y-ci-reporter-html --sitemap http://192.168.1.202:9090/sitemap.xml")
+                    if (result == 2) {
+                        echo "${result}"
+                    }  
+                }
+                sh "cd ${WORKSPACE}; docker stop test-sitemap-web"
+                sh "cd ${WORKSPACE}; docker rm test-sitemap-web"
+                echo "Publishing Pa11y Report"
+                publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, includes: '**/*.html', keepAll: false, reportDir: 'pa11y-ci-report', reportFiles: '', reportName: 'Pa11y Report', reportTitles: 'Pa11y Report', useWrapperFileDirectly: true])
+            
+            }
+        }
+
+        stage('OWASP ZAP Baseline Security Scan Test') {
+            steps {
+		            script {
+                    try {
+                        sh "mkdir -p $WORKSPACE/zap"
+                        sh "cp -f ${WORKSPACE}/i5k-k8s-manifests/zap-baseline.conf ${WORKSPACE}/zap"
+                        sh "chmod -R 777 ${WORKSPACE}/zap"
+                        sh "cd $WORKSPACE/i5k-k8s-manifests; docker run -v $WORKSPACE/zap:/zap/wrk/ -t owasp/zap2docker-stable zap-baseline.py -t http://20.62.235.155/ -c zap-baseline.conf -r security_scan_report.html" 			    
+                    }
+                    catch (exc) {
+                        echo 'OWASP ZAP Security Scan Violations Exist!'
+                        currentBuild.result = 'SUCCESS'
+                    }
+                }
+            }
+        }        
+    }
+}

@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drupal-tripal-deployment
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    matchLabels:
+      app: drupal
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: drupal
+    spec:
+      containers:
+        - name: drupal-tripal
+          image: ${IMAGENAME}
+          env:
+            - name: POSTGRES_USER
+              value: tripal
+            - name: POSTGRES_PASSWORD
+              value: tripal
+            - name: POSTGRES_DB
+              value: tripal
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: drupal-data
+              mountPath: /var/www/html/modules
+            - name: drupal-data
+              mountPath: /var/www/html/profiles
+            - name: drupal-data
+              mountPath: /var/www/html/themes
+            - name: drupal-data
+              mountPath: /var/www/html/sites
+      volumes:
+        - name: drupal-data
+          persistentVolumeClaim:
+            claimName: drupal-pvc

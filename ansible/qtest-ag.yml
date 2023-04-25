@@ -1,0 +1,23 @@
+---
+- name: Copy qtest agent config
+  hosts: win01
+  become: false
+  gather_facts: yes
+  vars:
+    agent_path_1: 'C:\qtest-windows-host-1\agentctl-2.3.6\agent.config'
+    agent_path_2: 'C:\qtest-windows-host-2\agentctl-2.3.6\agent.config'
+    local_dir1: ~/Ansible_CaC/qtest_agent1/agent.config
+    local_dir2: ~/Ansible_CaC/qtest_agent2/agent.config
+  tasks:
+    - name: Copy agent.config
+      ansible.builtin.fetch:
+        src: "{{ agent_path_1 }}"
+        dest: "{{ local_dir1 }}"
+        flat: yes
+    
+    - name: Copy agent.config
+      ansible.builtin.fetch:
+        src: "{{ agent_path_2 }}"
+        dest: "{{ local_dir2 }}"
+        flat: yes
+        

@@ -1,0 +1,31 @@
+---
+- name: Copy nginx configuration
+  hosts: host09
+  gather_facts: yes
+  tasks:
+    - name: Nginx Version
+      ansible.builtin.command:
+        cmd: "/usr/sbin/nginx -V"
+      register: version_info
+    
+    - ansible.builtin.debug:
+        var: version_info
+    
+    - ansible.builtin.copy:
+        dest: ~/Ansible_CaC/nginx_version.txt
+        content: "{{ version_info }}"
+      delegate_to: localhost
+    
+    - ansible.builtin.shell:
+        cmd: "rpm -qc nginx |  grep '\\.conf$'"
+        executable: /bin/bash
+      register: conf_paths
+
+    - become: yes
+      become_method: sudo
+      ansible.builtin.fetch:
+        dest: "~/Ansible_CaC/nginx_conf/{{ item | basename }}"
+        src: "{{ item }}"
+      loop: "{{ conf_paths.stdout_lines }}"
+
+
